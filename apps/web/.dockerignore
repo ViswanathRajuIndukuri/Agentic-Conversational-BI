@@ -1,0 +1,14 @@
+node_modules
+dist
+.vite
+.cache
+coverage
+
+.git
+.DS_Store
+.env
+.env.*
+
+Dockerfile
+.dockerignore
+*.log

@@ -1,0 +1,86 @@
+# Docker Compose for the Graphtic BI stack.
+#
+# Compose Spec — no `version:` field needed (it's been ignored since Compose v2).
+# Run from the repository root:
+#   docker compose up --build -d
+#   docker compose logs -f
+#   docker compose down
+#
+# All runtime config (paths, ports, keys) lives in `.env` — the same file
+# local-dev reads via load_dotenv. This file just:
+#   • bind-mounts ${DBT_PROJECT_DIR} (host path) to /workspace/dbt (container),
+#   • bind-mounts DuckDB data to /workspace/load_data (matches paths in profiles),
+#   • remaps the path env vars to container-internal locations,
+#   • publishes ${API_PORT} / ${WEB_PORT} on the host.
+
+name: agentic-bi
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: agentic-bi-api:latest
+    container_name: agentic-bi-api
+    # Inject everything from .env (LLM keys, host paths, LangSmith, etc.)
+    env_file:
+      - .env
+    environment:
+      # ── Container-internal overrides (precedence: environment > env_file) ──
+      # These describe the *image's* filesystem layout (see apps/api/Dockerfile).
+      # The host paths declared in .env are remapped here for inside-container use.
+      MCP_PYTHON_BIN: /app/.venv/bin/python
+      MCP_SERVER_PATH: /app/local_dbt_mcp.py
+      MF_BIN: /app/.venv/bin/mf
+      DBT_PROJECT_DIR: /workspace/dbt
+      DBT_PROFILES_DIR: /workspace/dbt
+      # Only the web container's origin needs to be allowed; same-origin
+      # requests from the browser hit nginx which proxies internally.
+      CORS_ORIGINS: '["http://localhost:${WEB_PORT:-8080}"]'
+    volumes:
+      # Bind the host dbt project (declared in .env) into the container.
+      # Writable because `mf` writes to ./logs/dbt.log.
+      - ${DBT_PROJECT_DIR}:/workspace/dbt:rw
+      # DuckDB — profiles often use `path: /workspace/load_data/olist.duckdb`.
+      # Default: sibling `load_data/`. Override with DUCKDB_DATA_DIR_HOST in `.env`.
+      # Must be :rw — DuckDB opens the file read/write (WAL / locks); :ro → "Read-only file system".
+      - ${DUCKDB_DATA_DIR_HOST:-${DBT_PROJECT_DIR}/../load_data}:/workspace/load_data:rw
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).status == 200 else 1)"
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    init: true
+    networks:
+      - agentic-bi
+
+  web:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+    image: agentic-bi-web:latest
+    container_name: agentic-bi-web
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - agentic-bi
+
+networks:
+  agentic-bi:
+    driver: bridge

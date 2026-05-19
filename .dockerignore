@@ -1,0 +1,44 @@
+# Build context = repo root (for the API image). Keep it small + safe.
+
+# VCS / IDE / OS noise
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.DS_Store
+
+# Local Python state
+.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+build
+dist
+*.egg-info
+
+# Frontend lives in its own image — not needed in the API build context.
+apps/web
+
+# Logs and caches
+**/*.log
+**/logs
+
+# Secrets / local-only config (compose injects env via env_file at runtime).
+.env
+.env.*
+
+# Docker meta
+docker-compose*.yml
+**/Dockerfile*
+.dockerignore
+
+# Agent / scratch
+mcps
+agent-transcripts
