@@ -80,7 +80,7 @@ function MetricsMock() {
           ))}
         </ul>
         <p className="feature-mock-footnote">
-          Single source of truth · viz &amp; dashboards coming soon
+          Single source of truth · charts in chat · dashboards coming soon
         </p>
       </div>
     </div>

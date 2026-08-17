@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { postSse } from "../lib/sse";
-import type { Message, ToolEvent } from "../lib/types";
+import type { Message, ToolEvent, VizPayload } from "../lib/types";
 import MessageView from "./Message";
 import MessageInput from "./MessageInput";
 
@@ -82,6 +82,11 @@ export default function ChatPanel() {
               preview: payload.preview ?? "",
             };
             update((m) => ({ ...m, events: [...m.events, tool] }));
+            break;
+          }
+          case "viz": {
+            const viz = payload as VizPayload;
+            update((m) => ({ ...m, viz }));
             break;
           }
           case "error":

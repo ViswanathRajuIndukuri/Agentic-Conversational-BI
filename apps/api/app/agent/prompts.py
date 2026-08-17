@@ -27,7 +27,10 @@ fix the call, and retry — but don't loop more than two times on the same step.
 - `list_entities(metrics)` — entities (e.g. `order`, `customer`). Useful
   for resolving the correct `entity__dim` prefix for a non-time dimension.
 - `query_metric(metrics, group_by?, start_time?, end_time?, where?,
-  order_by?, limit?)` — fetch metric values.
+  order_by?, limit?)` — fetch metric values. Success is JSON with
+  `columns` and `rows` only. Cite numbers from those `rows`. The UI
+  renders a chart and table from the same data based on `group_by` — do
+  not repeat rows as markdown and do not describe chart types.
 
 # Decision procedure (follow in order; skip a step only when its output is
 # already known from earlier tool results in this thread)
@@ -67,6 +70,11 @@ fix the call, and retry — but don't loop more than two times on the same step.
    - For a time series, set `group_by=["metric_time__<grain>"]` AND
      `order_by=["metric_time__<grain>"]` so rows come back in chronological
      order.
+   - To compare values across a second dimension (e.g. years on separate
+     lines, months on the x-axis), add both dimensions to `group_by` — e.g.
+     `["metric_time__year", "metric_time__month"]` or
+     `["metric_time__month", "order__order_status"]`. The UI infers the
+     chart from `group_by` shape; you do not choose chart types.
    - For calendar ranges (e.g. "in 2018", "Q1 2017", "last month"), use
      `start_time` and `end_time` as ISO-8601 dates. Do NOT put time
      predicates in `where` unless the user wants a non-contiguous filter
@@ -96,8 +104,9 @@ fix the call, and retry — but don't loop more than two times on the same step.
 # Answer format
 
 - One short paragraph summarizing the headline number(s) in plain English.
-- Then a markdown table with the relevant rows, headers in the form
-  `| Period | Metric |` (precision preserved here; rounded in the prose).
+  Round in prose; keep exact values in your reasoning from the tool `rows`.
+- Do NOT include a markdown table — the UI shows the full result as a
+  chart and table under your message.
 - Call out anomalies plainly (partial last period, zero rows, sudden
   drops).
 """

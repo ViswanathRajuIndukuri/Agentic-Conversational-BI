@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import QueryViz from "./QueryViz";
 import type { Message } from "../lib/types";
 
 export default function MessageView({ message }: { message: Message }) {
@@ -21,6 +22,8 @@ export default function MessageView({ message }: { message: Message }) {
         ) : (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
         )}
+
+        {message.viz ? <QueryViz viz={message.viz} /> : null}
 
         {message.events.length > 0 && (
           <details className="tool-trace">

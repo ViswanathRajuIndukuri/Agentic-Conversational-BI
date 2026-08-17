@@ -5,6 +5,7 @@ Event vocabulary (small and stable on purpose):
     event: ready          {"thread_id": "..."}
     event: tool_call      {"name": "...", "args": {...}}
     event: tool_result    {"name": "...", "preview": "..."}
+    event: viz            {metrics, group_by, columns, rows, ...}
     event: text_delta     {"delta": "..."}
     event: error          {"message": "..."}
     event: done           {}
@@ -21,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from app.agent.graph import get_agent
+from app.agent.viz import parse_query_viz, preview_from_output
 from app.auth.deps import require_user
 from app.schemas import ChatRequest
 from app.settings import get_settings
@@ -135,13 +137,18 @@ async def _stream_agent(req: ChatRequest) -> AsyncIterator[str]:
                 )
 
             elif kind == "on_tool_end":
-                preview = str(data.get("output", ""))
+                raw_output = data.get("output", "")
+                name = event.get("name", "")
+                preview = preview_from_output(raw_output)
                 if len(preview) > _TOOL_PREVIEW_CHARS:
                     preview = preview[:_TOOL_PREVIEW_CHARS] + "…"
                 yield _sse(
                     "tool_result",
-                    {"name": event.get("name", ""), "preview": preview},
+                    {"name": name, "preview": preview},
                 )
+                viz = parse_query_viz(name, raw_output)
+                if viz is not None:
+                    yield _sse("viz", viz)
 
     except Exception as exc:
         logger.exception("agent stream failed")

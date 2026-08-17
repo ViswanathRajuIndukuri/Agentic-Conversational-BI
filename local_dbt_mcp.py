@@ -34,10 +34,13 @@ from dotenv import load_dotenv
 # Compose) and only fills in missing keys from the file.
 load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
 
+import csv  # noqa: E402
+import json  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
 import subprocess  # noqa: E402
-from typing import Optional  # noqa: E402
+import tempfile  # noqa: E402
+from typing import Any, Optional  # noqa: E402
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
@@ -71,6 +74,10 @@ _SPINNER_PHRASES_RE = re.compile(r"🔍 Looking for [^\n]*", re.IGNORECASE)
 _ISO_DATE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+\-]\d{2}:?\d{2})?)?$"
 )
+_NUM_RE = re.compile(r"^-?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?$")
+
+# Keep row payloads bounded; viz and the LLM share the same `rows` array.
+_RESULT_ROW_CAP = 200
 
 
 def _clean(text: str) -> str:
@@ -129,6 +136,98 @@ def _validate_iso(name: str, value: Optional[str]) -> Optional[str]:
             f"datetime, got {value!r}."
         )
     return None
+
+
+def _coerce_cell(raw: str) -> str | int | float | None:
+    text = (raw or "").strip()
+    if text == "" or text.lower() in {"null", "none", "nan", "na"}:
+        return None
+    if not _NUM_RE.match(text):
+        return text
+    if any(ch in text for ch in ".eE"):
+        try:
+            return float(text)
+        except ValueError:
+            return text
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
+def _read_mf_csv(path: str) -> tuple[list[str], list[list[Any]]]:
+    with open(path, newline="", encoding="utf-8") as fh:
+        reader = csv.reader(fh)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return [], []
+        columns = [c.strip() for c in header]
+        rows: list[list[Any]] = []
+        for raw in reader:
+            if not raw or all(not (cell or "").strip() for cell in raw):
+                continue
+            padded = list(raw) + [""] * (len(columns) - len(raw))
+            rows.append([_coerce_cell(cell) for cell in padded[: len(columns)]])
+        return columns, rows
+
+
+def _run_mf_query(args: list[str], query: dict[str, Any]) -> str:
+    """Run `mf query` with `--csv` and return JSON (`columns` + `rows` only).
+
+    On failure, returns the same `Error: ...` string shape as `_run_mf` so the
+    agent can self-correct. The same payload feeds the LLM, the viz SSE event,
+    and the UI table — no duplicate markdown copy of the rows.
+    """
+    fd, csv_path = tempfile.mkstemp(prefix="mf_query_", suffix=".csv")
+    os.close(fd)
+    cmd = [MF_BIN, *args, "--csv", csv_path]
+    pretty_cmd = "mf " + " ".join(args)
+    try:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=DBT_PROJECT_DIR,
+            )
+        except FileNotFoundError as exc:
+            return f"Error: cannot execute mf binary at {MF_BIN}: {exc}"
+
+        stdout = _clean(result.stdout)
+        stderr = _clean(result.stderr)
+        if result.returncode != 0:
+            parts = [p for p in (stderr, stdout) if p]
+            detail = "\n".join(parts) if parts else "(no stderr/stdout from mf)"
+            return (
+                f"Error (exit {result.returncode}) running `{pretty_cmd}`:\n{detail}"
+            )
+
+        if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+            columns, rows = [], []
+        else:
+            columns, rows = _read_mf_csv(csv_path)
+
+        truncated = len(rows) > _RESULT_ROW_CAP
+        if truncated:
+            rows = rows[:_RESULT_ROW_CAP]
+
+        payload = {
+            "ok": True,
+            "metrics": query.get("metrics") or [],
+            "group_by": query.get("group_by") or [],
+            "start_time": query.get("start_time"),
+            "end_time": query.get("end_time"),
+            "columns": columns,
+            "rows": rows,
+            "truncated": truncated,
+        }
+        return json.dumps(payload, ensure_ascii=False, default=str)
+    finally:
+        try:
+            os.unlink(csv_path)
+        except OSError:
+            pass
 
 
 @mcp.tool()
@@ -232,7 +331,11 @@ def query_metric(
     order_by: Optional[list[str]] = None,
     limit: Optional[int] = None,
 ) -> str:
-    """Run `mf query` and return the result table.
+    """Run `mf query` and return JSON with `columns` and `rows`.
+
+    Cite numbers from the `rows` in this JSON only. On failure the return
+    value starts with `Error:` (same shape as the other tools). The UI renders
+    a chart and table from the same payload — do not repeat rows as markdown.
 
     Args:
         metrics: Metric names from list_metrics. Required, non-empty.
@@ -294,7 +397,15 @@ def query_metric(
     if limit is not None:
         args += ["--limit", str(limit)]
 
-    return _run_mf(args)
+    return _run_mf_query(
+        args,
+        {
+            "metrics": metrics,
+            "group_by": group_by or [],
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+    )
 
 
 if __name__ == "__main__":

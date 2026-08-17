@@ -8,7 +8,7 @@ export default function HeroDashboard() {
           <span className="landing-preview-dot" />
           <span className="landing-preview-dot" />
           <span className="hero-stage-title">Analytics workspace</span>
-          <span className="hero-stage-soon">Viz &amp; dashboards — coming soon</span>
+          <span className="hero-stage-soon">Charts in chat · dashboards coming soon</span>
         </header>
 
         <div className="hero-stage-body">
